@@ -1,0 +1,28 @@
+---
+title: "Extranjeros"
+author: "Savino Analia"
+date: "12/3/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+Extranjeros<-filter(Escrutinio_ac, str_detect(Mesa,"E" ))
+```
+
+```{r}
+VotosExtr <-Extranjeros %>% 
+  group_by(agrupacion) %>% 
+  summarise(total = sum(votos)) %>% 
+  mutate(Porcentaje = total/sum(total)*100) 
+  
+TotalesEx <- colSums(VotosExtr[ ,2:3]) 
+
+  ggplot()+
+  geom_bar(aes(x=agrupacion, y= total))
+  
+```
+

@@ -1,0 +1,246 @@
+---
+title: "Trabajo Final"
+author: "Almeida Marcela, Savino Analia"
+date: "12/12/2021"
+output: 
+  html_document:
+    theme: united
+    toc: true
+    toc_depth: 3
+    toc_float: 
+      collapsed: false
+      scroll_smooth: true
+    code_folding: "show"
+---
+
+```{r setup, include=FALSE}
+
+rm(list = ls())
+
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+library(plyr)
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(readxl)
+library(stringr)
+library(xlsx)
+library(colorspace)
+library(kableExtra)
+library(sf)
+library(tidyr)
+library(leaflet)
+library(tidyverse)
+
+
+```
+Vamos a estudiar si hay alguna correlación entre la "vulnerabilidad" de las zonas donde se encuentran las escuelas sedes de votación con los resultados de la votación.
+
+Para eso, investigamos qué tipo de indicadores nos servían para estratificar de alguna manera las distintas áreas de la localidad de Ezeiza. Nos encontramos con el "Índice de contexto social en educación" (ICSE), que se presenta como la utilización de la información censal para la clasificación de pequeños territorios en base a una aproximación multidimensional a las condiciones de vida como marco 
+para la política educativa. Este indicador se presentó por primera vez en 2016 y está construido a partir de datos del Censo 2010.
+
+Utilizamos las definiciones que aparecen en el Documento de trabajo cuyo autor es Born, Diego, publicado por el Ministerio de Educación de la Nación, en 2019. Puede verse en el link <https://panorama.oei.org.ar/_dev2/wp-content/uploads/2020/01/ICSE-1er-informe-ISBN.pdf>
+
+A continuación, hacemos una breve descripción del indicador.
+
+El ICSE es una herramienta que permite segmentar territorios (radios, fracciones, departamentos, provincias) en función de los diferentes niveles de vulnerabilidad o privación que enfrentan los hogares (o las personas) desde un enfoque multidimensional que se nutre de distintos indicadores: las características de la vivienda (materiales y hacinamiento), el acceso a servicios básicos (agua y saneamiento), la educación formal de los integrantes adultos del hogar y la capacidad económica del mismo (a partir de la situación laboral de sus integrantes y de ratios de dependencia). En cada una de estas dimensiones se consideran uno o dos indicadores para los cuales se definen umbrales de privación moderados y severos. De la agregación equiponderada de los resultados obtenidos en estos indicadores se obtiene el valor del ICSE para cada hogar/persona, a partir del cual es posible estimar resultados del ICSE (valor promedio, distribución en rangos, etc.) para distintos agregados geográficos. 
+
+A partir del cálculo del ICSE para los radios censales de Ezeiza, obtuvimos el siguiente mapa, donde la escala de colores asigna el más oscuro a las zonas con más vulnerabilidad.
+
+```{r}
+
+radios.buenos.aires <- st_read("datos/Codgeo_Buenos_Aires_con_datos/Buenos_Aires_con_datos.shp")
+
+radios.buenos.aires <- st_transform(radios.buenos.aires, crs = 4326)
+
+# Subseleccion de Radios Censales en Ezeiza
+rc.ezeiza <- radios.buenos.aires %>% filter(str_detect(link, "06270"))
+
+ezeiza <- rc.ezeiza %>% mutate(unos = 1) %>%  summarise(suma = sum(unos))
+
+indice_ICSE_ezeiza<-read_excel("datos/ICSE_Ezeiza.xlsx")
+
+rc.ezeiza$link <- as.numeric(as.character(rc.ezeiza$link))
+
+rc.ezeiza <- rc.ezeiza %>% 
+  left_join(indice_ICSE_ezeiza,             
+            by = c( "link" = "RADIO"))
+
+cuartiles <- quantile(rc.ezeiza$ICSE3a17)
+cuartiles
+
+# Nueva Variable
+rc.ezeiza <- rc.ezeiza %>% 
+  mutate(ICSE3a17 = case_when(.$ICSE3a17 <= cuartiles[[2]] ~ 1,
+                          .$ICSE3a17 <= cuartiles[[3]] ~ 2,
+                          .$ICSE3a17 <= cuartiles[[4]] ~ 3,
+                          .$ICSE3a17> cuartiles[[4]] ~ 4))
+
+# Cambiando los nombres de las variables creadas anteriormente
+cuartiles.colores <- factor(c(1,2,3,4), 
+                            labels = c("0-24.99%", "25-49.99%", 
+                                       "50-74.99%", "75-100%"))
+
+colors <- c("#e3f2fd", "#64b5f6", "#1e88e5", "#0d47a1")
+
+binpal <- colorBin(colors, rc.ezeiza$ICSE3a17, 4, pretty = FALSE)
+
+Color_Assets <- colorFactor(colors, levels = cuartiles.colores, ordered=TRUE)
+
+
+                               
+```
+
+```{r}
+leaflet() %>%
+  addTiles() %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  # Mapeando los poligonos de Ezeiza
+  addPolygons(data = rc.ezeiza,
+              color = ~binpal(ICSE3a17), weight = 1, smoothFactor = 1,
+              stroke = FALSE, fillOpacity = 0.5) %>% 
+  addPolygons(data = ezeiza, fill = NA, color = "black", fillOpacity = NA) %>% 
+  addLegend("bottomright", pal = Color_Assets, values =  cuartiles.colores,
+    title = "Vulnerabilidad según ICSE",
+    opacity = 1)
+
+```
+
+
+Como otra capa de análisis, consideramos la ubicación geográfica de los Barrios Populares, registro aportado por la Secretaría de integración socio urbana del Ministerio de Desarrollo Social de la Nación, desde el año 2017.Los polígonos que utilizamos para la elaboración de esta capa del mapa están en
+<https://datos.gob.ar/dataset/desarrollo-social-registro-nacional-barrios-populares>
+Los Barrios Populares aparecen en color rosa en el siguiente mapa.Pasando el mouse por los polígonos se puede ver el nombre de cada uno de los Barrios Populares
+
+
+
+
+
+
+```{r}
+
+barrios_populares <- st_read("datos/barrios-populares/barrios-populares.shp")
+
+barrios_populares <- st_transform(barrios_populares, crs = 4326)
+
+#falta seleccionar ezeiza  
+barrios_populares_ezeiza <- barrios_populares %>% filter(departamen == "EZEIZA")
+
+
+leaflet() %>%
+  addTiles() %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  # Mapeando los poligonos de Ezeiza
+  addPolygons(data = rc.ezeiza,
+              color = ~binpal(ICSE3a17), weight = 1, smoothFactor = 1,
+              stroke = FALSE, fillOpacity = 0.5) %>% 
+   addPolygons(data = barrios_populares_ezeiza, 
+              color = "pink", 
+              weight = 1, 
+              smoothFactor = 0.5, 
+              opacity = 1, label= ~ nombreBarr)%>% 
+   addPolygons(data = ezeiza, fill = NA, color = "black", fillOpacity = NA) %>% 
+  addLegend("bottomright", pal = Color_Assets, values =  cuartiles.colores,
+    title = "Vulnerabilidad según ICSE",
+    opacity = 1)
+```
+Por último, construimos una capa donde los puntos son las distintas escuelas de Ezeiza.
+
+
+
+```{r}
+Escrutinio<-read_excel("datos/Escrutinio_geo.xls")
+
+listado_para_ubicacion<-read_excel("datos/Escuelas_arregladas.xlsx")
+
+listado <- select(Escrutinio, Establecimiento, IdCircuito)%>%
+  unique ()%>%
+  inner_join(listado_para_ubicacion, by=c("Establecimiento" = "nombre"))
+#write.xlsx(listado, "C:/Users/malmeida/listado.xlsx" )
+
+#Lo transformamos en formato geográfico
+
+escuelas_ezeiza <- listado %>% 
+  st_as_sf(coords = c("longitud", "latitud"),crs = 4326)
+
+leaflet() %>%
+  addTiles() %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  # Mapeando los poligonos de Ezeiza
+  addPolygons(data = rc.ezeiza,
+              color = ~binpal(ICSE3a17), weight = 1, smoothFactor = 1,
+              stroke = FALSE, fillOpacity = 0.5) %>% 
+   addPolygons(data = barrios_populares_ezeiza, 
+              color = "pink", 
+              weight = 1, 
+              smoothFactor = 0.5, 
+              opacity = 0.5, label = ~ nombreBarr)%>% 
+ addPolygons(data = ezeiza, fill = NA, color = "black", fillOpacity = NA) %>% 
+  addLegend("bottomright", pal = Color_Assets, values =  cuartiles.colores,
+    title = "Vulnerabilidad según ICSE",
+    opacity = 0.5)%>%
+  addCircleMarkers(data = escuelas_ezeiza, 
+                   radius = 1, 
+                   color = "#0d48a1", 
+                   opacity = 1, popup  =  ~ Establecimiento) 
+  
+
+
+
+
+
+```
+Acá va análisis de los resultados en las escuelas de zonas más vulnerables y las de zonas menos vulnerables. 
+
+
+
+
+```{r}
+
+escuelas_ezeiza<-escuelas_ezeiza%>%
+  mutate(idRadio=st_within(escuelas_ezeiza, rc.ezeiza))
+  
+
+escuelas_ezeiza$idRadio<-as.numeric(escuelas_ezeiza$idRadio)
+
+Escrutinio_votos<-Escrutinio%>%
+  filter(Cargo =="DIPUTADOS NACIONALES")%>%
+  group_by(Establecimiento, Agrupacion)%>%
+  summarise(votos=sum(votos))%>%
+  pivot_wider(names_from=Agrupacion, values_from=votos, values_fill=0)%>%
+  right_join(escuelas_ezeiza,by = "Establecimiento") %>% arrange(idRadio)
+
+
+
+#armo un vector con las filas que quiero filtrar
+filtro_filas<-Escrutinio_votos$idRadio
+
+tabla_filtrada_ICSE<-indice_ICSE_ezeiza[filtro_filas,]
+
+tabla_filtrada_ICSE_idR <- tabla_filtrada_ICSE %>% mutate(idRadio=filtro_filas) %>% select(ICSE3a17,idRadio)
+
+
+Escrutinio_votos_ICSE<-Escrutinio_votos %>% left_join(tabla_filtrada_ICSE_idR) %>% 
+rename(Frente_de_todos= `FRENTE DE TODOS`)
+#Cambiar nombres de columnas (sin espacios)
+
+view(Escrutinio_votos_ICSE)
+  
+
+#Miramos la correlacion de las variables
+ 
+regresion <- lm(Frente_de_todos  ~ ICSE3a17, Escrutinio_votos_ICSE)
+summary(regresion)
+
+
+
+
+
+#view(escuelas_ezeiza)
+
+
+```
+

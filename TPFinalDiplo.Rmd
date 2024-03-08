@@ -1,0 +1,768 @@
+---
+title: "Trabajo Final Diplomatura Análisis de Datos "
+author: "Almeida Marcela, Savino Analia"
+date: "Marzo 2022"
+output: 
+  html_document:
+    theme: united
+    toc: true
+    toc_depth: 3
+    toc_float: 
+      collapsed: false
+      scroll_smooth: true
+    code_folding: "hide"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+library(plyr)
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(readxl)
+library(stringr)
+library(xlsx)
+library(kableExtra)
+library(sf)
+library(tidyr)
+library(leaflet)
+library(tidyverse)
+
+```
+
+## **Introducción**
+
+Leemos el archivo MESAS_ESCRUTADAS_Cierre.csv con el escrutinio oficial de las elecciones generales del 14/11/2021; el que obtuvimos de la página <http://telegramas.resultados.gob.ar/> la cual ya no esta disponible.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+#escrutinio <- read.csv("datos/MESAS_ESCRUTADAS_Cierre.csv")
+```
+
+```{r include=FALSE}
+#Ezeiza <- escrutinio %>% 
+  #filter(IdDistrito==2) %>% 
+  #filter(IdSeccion==132)
+
+#dim(Ezeiza)
+
+#write.xlsx(Ezeiza,"datos/Ezeiza.xlsx")
+
+#El codigo anterior fue comentado porque a partir de ahora trabajaremos directamente con el archivo Ezeiza que se obtuvo una vez hecha la limpieza del archivo escrutinio.
+
+```
+
+> ```{r include=FALSE}
+> #columna <- str_replace_all(Escuelas, "NÂ°", "Nº")  columna <- str_replace_all(columna,"EDUCACIÓN PRIMARIA", "EP" )
+> #columna <- str_replace_all(columna, "DE", " ")
+> >
+> >
+> #columna2 <-list(columna)
+> #Escuelas2 <-data.frame(columna2) 
+> >
+> #Escuelas <-select(Escuelas, columna) %>% 
+> #rename(nombre= columna) 
+> ```
+
+```{r include=FALSE}
+Escrutinio <- read.csv("datos/Escrutinio_geo.csv", header = TRUE, sep = ";")
+dim(Escrutinio)
+
+
+Padron <- read.csv("datos/d132_EZEIZA.csv", header = TRUE, sep = ",")
+
+Escrutinio[Escrutinio == "FRENTE DE IZQUIERDA Y DE TRABAJADORES - UNIDAD"]<-"F.Izquierda"
+Escrutinio[Escrutinio == "FRENTE DE TODOS"]<-"FDeTodos"
+Escrutinio[Escrutinio =="FRENTE VAMOS CON VOS"]<-"F Vamos Con Vos"
+Escrutinio[Escrutinio == "UNION CELESTE Y BLANCO"]<-"U Celeste y Blanco"
+Escrutinio[Escrutinio == "+ VALORES"]<-"+ Valores"
+Escrutinio[Escrutinio == "AVANZA LIBERTAD"]<-"Avanza Libertad"
+Escrutinio[Escrutinio == "JUNTOS"]<-"Juntos"
+Escrutinio[Escrutinio =="289"]<-"Ezeiza/Canning"
+Escrutinio[Escrutinio =="290"]<-"La Unión"
+Escrutinio[Escrutinio =="0290A"]<-"T. Suárez"
+Escrutinio[Escrutinio =="0290B"]<-"Spegazzini"
+Escrutinio[Escrutinio == "DIPUTADOS NACIONALES"]<-"D.Nacionales"
+Escrutinio[Escrutinio == "DIPUTADOS PROVINCIALES"]<-"D.Provinciales"
+Escrutinio[Escrutinio == "CONCEJALES"]<-"Concejales"
+
+Escrutinio$Cargo <-factor(Escrutinio$Cargo,ordered = TRUE,levels = c("Concejales", "D.Provinciales", "D.Nacionales"))
+
+Escrutinio_ac <-Escrutinio %>% 
+  mutate(agrupacion = fct_collapse(Agrupacion,
+                      Otros = c("blancos","nulos","recurridos","comando","impugnados","+ Valores","F.Izquierda","U Celeste y Blanco","F Vamos Con Vos","Avanza Libertad")))%>%   
+select(agrupacion,Cargo,Establecimiento,Latitud,Longitud,IdCircuito,Mesa,electores,votos)
+
+Escrutinio_ac$IdCircuito <-factor(Escrutinio_ac$IdCircuito, ordered = TRUE, levels = c("Ezeiza/Canning","La Unión","T. Suárez","Spegazzini"))
+
+Escrutinio_ac$Cargo <-factor(Escrutinio_ac$Cargo,ordered = TRUE,levels = c("Concejales", "D.Provinciales", "D.Nacionales"))
+
+#write.xlsx(Padron, file="datos/Padron.xlsx",sheetName = "ezeiza")
+
+#Alimentar <- read.csv("datos/Titulares_Tarjeta_Alimentar-20210801.csv", header = TRUE, sep = ",")
+```
+
+## **Análisis Exploratorio de datos**
+
+El archivo contiene 2,665,130 registros con 18 campos. procedemos a filtrar por el campo IdDistrito valor 2 estos son los registros que corresponden a la PBA y por IDSección 0132 que incluyen a los registros del municipio de Ezeiza. El nuevo archivo Escrutinio contiene 12.429 registros, en cada uno ellos se refleja el total de votos obtenidos en cada una de las 397 mesas para cada una de los 3 cargos disputados por cada una de las 7 agrupaciones participantes, más los votos blancos, nulos, impugnados, recurridos y comando que se obtuvo en cada categoría.
+
+El primer objetivo es poder identificar como se distribuyeron los votos entre las distintas agrupaciones y los votos en blanco, imputados y nulos.
+
+```{r}
+ResxLista <- ddply(
+ .data = Escrutinio,
+ .variables = "Agrupacion",
+ .fun = function(x) as.integer(sum(x$votos))
+ ) 
+
+ResxLista<-ResxLista %>% 
+  dplyr::rename(votos = V1)
+
+Agrupacion <-c("Votos Totales")
+votos <-c(sum(ResxLista$votos))
+VotosTotales <- as.integer(votos) 
+
+TotalVotos<-data.frame(Agrupacion, votos)
+  
+ResxLista <- rbind(ResxLista, TotalVotos)
+
+ResxLista<-mutate(ResxLista, Porcentaje = round(ResxLista$votos/VotosTotales*100, digits =2)) %>% 
+  arrange(-votos)
+
+```
+
+### **Distribución de votos**
+
+```{r}
+kable(ResxLista,
+      col.names = c("Agrupación", "Total", "Porcentaje" ),
+      format.args = list(decimal.mark= ",", big.mark= ".")) %>% 
+  kable_styling()
+```
+
+```{r}
+ResxLista2<-ResxLista %>% 
+  filter(Agrupacion != "Votos Totales") %>% 
+  filter(Agrupacion == c("FDeTodos","Juntos","F.Izquierda","Avanza Libertad","F Vamos Con Vos","blancos"))
+
+ggplot(ResxLista2,aes(x= reorder(Agrupacion,- Porcentaje), y= Porcentaje), na.rm = TRUE)+
+  geom_col(aes(fill=Agrupacion))+
+  scale_x_discrete()+
+  scale_y_continuous(breaks = seq(0,50,5),
+                     expand = c(0,1))+
+  theme(
+    legend.position = "rigth",
+    axis.text.x = element_text(angle = 45, size = 6, hjust=1))+
+  labs(title = "Distribución porcentual de los votos por lista",
+       subtitle = "Noviembre 2021",
+       x= "Agrupaciones",
+       y= "Votos Positivos")+
+  geom_text(aes(label=Porcentaje))
+```
+
+En el gráfico anterior podemos observar que de los 302.348 votos, el Frente de Todos obtuvo el 49%, seguido por la agrupación Juntos con un 26%. Dado la discusión pública que hubo durante las últimas semanas sobre la reelección indefinida de los intendentes, nos proponemos observar si la elección municipal presenta un comportamiento diferencial. Por lo tanto analizaremos más de cerca el comportamiento del electorado en función a los cargos disputados. Siendo la pregunta, ¿Existe el corte de boleta?
+
+### **Comparativo con las paso**
+
+```{r}
+
+```
+
+```{r}
+ResxCargo <- ddply(
+ .data = Escrutinio_ac,
+ .variables = c("agrupacion","Cargo"),
+ .fun = function(x) as.integer(sum(x$votos))
+ ) 
+
+ResxCargo<-ResxCargo %>% 
+  dplyr::rename(votos = V1) 
+  
+ResxCargo$agrupacion = factor(ResxCargo$agrupacion, levels =c("FDeTodos","Juntos","Otros"))
+
+
+View(VotosTotales)
+
+ResxCargo<-mutate(ResxCargo, PorcentajeGral = round(ResxCargo$votos/VotosTotales*100, digits =3)) %>% 
+  group_by(agrupacion) %>% 
+   mutate(Porcentaje = round(votos/sum(votos)*100, digits = 2)) %>%   ungroup()  
+  
+  
+```
+
+### **Distribución de los votos según lista y cargo**
+
+```{r}
+ResxCargo %>% 
+ ggplot(aes(x=Cargo, y= Porcentaje, na.rm=TRUE))+
+  geom_col(aes(fill= Cargo))+
+  facet_grid(~agrupacion)+
+   scale_fill_brewer(palette = "Dark2")+
+   scale_x_discrete()+
+   scale_y_continuous(limits = c(0,40),
+                      breaks = seq(0,40,5),
+                      expand = c(0,1))+
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, size = 6, hjust= 1))+
+  labs(title = "Distribución de los votos entre los cargos dentro de una misma lista",
+       subtitle = "Noviembre 2021",
+       x= "Cargos",
+       y= "Votos Positivos")+
+  geom_text(aes(label=Porcentaje))
+```
+
+A través de este gráfico podemos observar que la distribución del total de votos recibido por cada una de las agrupaciones, entre los cargos (Nacionales, Provinciales y Municipales) es bastante homogénea, incluso en la lista del Frente de Todos, que en la categoría Concejales obtuvo solamente un 2.61% más de votos que en la categoría provincial.(No consideramos para el análisis los votos a nivel nacional ya que las personas extranjeras registradas en el padrón no votan a esa categoría, por lo cual es esperable que haya menos votos en la misma), en el caso de la segunda fuerza electoral, Juntos esta diferencia fue del 1.79%.
+
+### **Votos en Blanco**
+
+```{r}
+votoblanco <-Escrutinio %>% 
+  filter(Agrupacion == "blancos") %>% 
+  group_by(Cargo) %>% 
+  summarise(sum(votos)) %>% 
+  ungroup() 
+
+votoblanco<-rename(votoblanco, totvotos = `sum(votos)` )
+
+votoblanco <- votoblanco %>% 
+  mutate(Porcentaje = round(totvotos/sum(totvotos)*100, digits = 2))
+  
+```
+
+```{r}
+ggplot(data=votoblanco, mapping=aes(x=Cargo, y= Porcentaje))+
+  geom_col(aes(fill= Cargo))+
+   scale_fill_brewer(palette = "Dark2")+
+   scale_x_discrete()+
+  scale_y_continuous(breaks = seq(0,40,5),
+                     expand = c(0,1))+
+  theme(
+    legend.position = "none",
+    legend.title = element_text(color = "white"),
+    axis.text.x = element_text(size = 6))+
+  labs(title = "Distribución de los votos en blanco según los cargos.",
+       subtitle = "Noviembre 2021",
+       x= "Cargos",
+       y= "Porcentaje")+
+    geom_text(aes(label=Porcentaje))
+```
+
+El que sí es un dato llamativo,es que dentro de los 15.610 votos en blanco que hubo, la distribución no es homogénea, ya que podemos observar que el cuerpo de Concejales obtuvo un 40,36% seguido por el cuerpo de Diputados Provinciales con un 33.38%, es decir en este caso si hay una amplia diferencia entre la indecisión o la no aceptación del candidato local.
+
+Veamos que paso en las elecciones de medio término del 2017, en este caso la candidata también era Dulce Granados.
+
+```{r}
+VBlanco17 <- read_excel("datos/VBlanco17.xlsx") %>% 
+  group_by(Cargo) %>% 
+  summarise(Total= sum(Votos))
+
+VBlanco17 <- VBlanco17 %>% 
+  mutate(Porcentaje = round(Total/sum(Total)*100, digits = 2))
+```
+
+```{r}
+ggplot(data=VBlanco17, mapping=aes(x=Cargo, y= Porcentaje))+
+  geom_col(aes(fill= Cargo))+
+   scale_fill_brewer(palette = "Dark2")+
+   scale_x_discrete()+
+  scale_y_continuous(breaks = seq(0,40,5),
+                     expand = c(0,1))+
+  theme(
+    legend.position = "none",
+    legend.title = element_text(color = "white"),
+    axis.text.x = element_text(size = 6))+
+  labs(title = "Distribución de los votos en blanco según los cargos.",
+       subtitle = "Octubre 2017",
+       x= "Cargos",
+       y= "Porcentaje")+
+    geom_text(aes(label=Porcentaje))
+```
+
+Si bien tendríamos que ampliar el análisis a otros comicios, ya que tanto en el año 2017 como en el 2021 la candidata a primera concejal fue la misma (Dulce Granados), podemos en afirmar que habría una tendencia del electorado a desconocer o a mostrar mayor indecisión ante los candidatos locales, siendo marcado el descenso del voto en blanco en los candidatos nacionales. Intuimos que la mayor exposición en los medios de estos últimos debe colaborar a definición por parte del electorado.
+
+### **Distribución Geográfica de los resultados**
+
+Dado que el objetivo de nuestro trabajo es analizar entre otras cosas, la relación de las variables sociedomograficas y la inclinación al voto. Obtuvimos de la página del ministerio de educación de la PBA www.mapadeeducacion.com un listado con todas las escuelas de la provincia con su geolocalización. Haciendo uso de la herramienta OpenRefine, pudimos agregarle a nuestro archivo Escrutinio la ubicación geográfica de las escuelas en las cuales se voto. Por eso a continuación leemos el nuevo archivo archivo Escrutinio que será con el cual trabajaremos de aquí en adelante.
+
+```{r message=TRUE, warning=TRUE, include=FALSE}
+ResXLocalidad <- Escrutinio_ac %>% 
+  group_by(IdCircuito,agrupacion) %>% 
+  summarise(sum(votos, na.rm = TRUE)) %>%
+  ungroup() 
+
+ResXLocalidad <-rename(ResXLocalidad, Total= `sum(votos, na.rm = TRUE)`)
+
+ResXLocalidad <-ResXLocalidad %>% 
+  group_by(IdCircuito) %>% 
+  mutate(Porcentaje = round(Total/sum(Total)*100, digits = 2))
+```
+
+```{r}
+ggplot(ResXLocalidad, aes(x=reorder(agrupacion, -Porcentaje), y= Porcentaje), na.rm = TRUE)+
+  geom_col(aes(fill= agrupacion))+
+  facet_grid(~IdCircuito)+
+  scale_fill_brewer(palette= "Dark2")+
+  scale_x_discrete()+
+  scale_y_continuous(limits = c(0,60),
+                    breaks = seq(0,60,5),
+                     expand = c(0,1))+
+  labs(title = "Distribución de los votos por Localidad",
+       x= "Agrupación",
+       y= "Porcentaje de votos")+
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, size = 6, hjust=1))+
+    geom_text(aes(label=Porcentaje), stat = "identity", size= 3 )
+
+```
+
+El gráfico anterior nos permite observar que, en el sector más céntrico del municipio la brecha entre la primera y la segunda fuerza fue de casi un 10% mientras que en Spegazzini el Frente de Todos duplica en votos a Juntos por el cambio, obteniendo más del 55% de los voto.
+
+### **Tiene la elección municipal un comportamiento distinto**
+
+Ahora vamos a trabajar más de cerca con la elección Municipal.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+Concejales <- Escrutinio_ac %>% 
+  filter(Cargo=="Concejales") %>% 
+  group_by(IdCircuito,agrupacion) %>% 
+  summarise(sum(votos)) %>% 
+  ungroup()
+
+Concejales <- rename(Concejales, Total = `sum(votos)`)
+  
+Concejales <-Concejales %>% 
+  group_by(IdCircuito) %>% 
+  mutate(Porcentaje = round(Total/sum(Total)*100, digits = 2)) 
+
+```
+
+```{r message=FALSE, warning=FALSE}
+ggplot(Concejales, aes(x=reorder(agrupacion, -Porcentaje), y= Porcentaje), na.rm = TRUE)+
+  geom_col(aes(fill= agrupacion))+
+  facet_grid(~IdCircuito)+
+  scale_fill_brewer(palette = "Dark2")+
+  scale_x_discrete()+
+  scale_y_continuous(limits = c(0,60),
+                    breaks = seq(0,60,5),
+                    expand = c(0,0))+
+  labs(title = "Votos al cuerpo de Concejales según Localidad",
+       x= "Agrupación",
+       y= "Porcentaje de Votos")+
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, size = 5, hjust=1))+
+   geom_text(aes(label=Porcentaje), stat = "identity", size= 3 )
+
+
+```
+
+Podemos observar que a nivel municipal se confirma la tendencia anterior de que en las zonas más céntricas del distrito la brecha entre la primera y la segunda fuerza se acorta.
+
+### **Comportamiento por escuela**
+
+#### *Circuito (289) Ezeiza Canning*
+
+¿Hay algún comportamiento particular en función de la escuela?
+
+```{r message=FALSE, warning=FALSE}
+Escuelas289<- Escrutinio_ac %>% 
+  filter(IdCircuito=="Ezeiza/Canning") %>% 
+  group_by(Establecimiento, agrupacion) %>% 
+  summarise(sum(votos)) %>% 
+  rename(total = 'sum(votos)') %>% 
+  ungroup() 
+
+Escuelas289 <- Escuelas289 %>% 
+  group_by(Establecimiento) %>% 
+  mutate(Porcentaje = round(total/sum(total)*100, digits = 2)) 
+
+
+Escuelas2898s<-  colSums(Escuelas289[ ,3:4])
+view(Escuelas2898s)
+
+```
+
+```{r message=FALSE, warning=FALSE}
+Escuelas289 %>%   
+filter(grepl("ESCUELA", Establecimiento)) %>% 
+  ggplot(aes(x= agrupacion, y= Porcentaje, group= Establecimiento, fill=agrupacion))+
+  geom_bar(stat = "identity")+
+  facet_wrap(~Establecimiento)+
+  scale_fill_brewer(palette = "Dark2")+
+  theme(axis.text = element_text(angle = 45, hjust = 1, size = 4),
+        legend.position = "none")+
+  geom_text(aes(label = Porcentaje),
+            size= 3,
+            vjust= "inward")+
+  labs(title = "Distribución de los votos en Escuelas de gestión pública",
+       subtitle = "Circuito Ezeiza / Canning",
+       x= "Agrupación")
+  
+```
+
+```{r message=FALSE, warning=FALSE}
+Escuelas289 %>%   
+filter(!grepl("ESCUELA", Establecimiento)) %>% 
+  ggplot(aes(x= agrupacion, y= Porcentaje, group= Establecimiento, fill=agrupacion))+
+  geom_bar(stat = "identity")+
+  facet_wrap(~Establecimiento)+
+  scale_fill_brewer(palette= "Dark2")+
+  geom_text(aes(label = Porcentaje),
+            size= 3,
+            vjust= "inward")+
+  theme(axis.text = element_text(angle = 45, hjust = 1, size=4),
+        legend.position = "none")+
+  labs(title = "Distribución de los votos en Colegios e Institutos de gestión privada",
+       subtitle = "Circuito Ezeiza/Canning",
+       x= "Agrupación")
+```
+
+#### *Circuito (290) La Unión*
+
+```{r}
+Escuelas290<- Escrutinio_ac %>% 
+  filter(IdCircuito=="La Unión") %>% 
+  group_by(Establecimiento, agrupacion) %>% 
+  summarise(sum(votos)) %>% 
+  rename(total = 'sum(votos)') %>% 
+  ungroup() 
+
+Escuelas290 <- Escuelas290 %>% 
+  group_by(Establecimiento) %>% 
+  mutate(Porcentaje = round(total/sum(total)*100, digits = 2)) 
+
+Escuelas290s<-  colSums(Escuelas290[ ,3:4])
+view(Escuelas290s)
+```
+
+```{r message=FALSE, warning=FALSE}
+Escuelas290 %>%   
+filter(grepl("ESCUELA", Establecimiento)) %>% 
+  ggplot(aes(x= agrupacion, y= Porcentaje, group= Establecimiento, fill=agrupacion))+
+  geom_bar(stat = "identity")+
+  facet_wrap(~Establecimiento)+
+  scale_fill_brewer(palette = "Dark2")+
+  geom_text(aes(label = Porcentaje),
+            size= 3,
+            vjust= "inward")+
+  theme(axis.text = element_text(angle = 45, hjust = 1, size = 4),
+        legend.position = "none")+
+  labs(title = "Distribución de los votos en Escuelas de gestión pública",
+       subtitle = "Circuito La Unión",
+       x= "Agrupación")
+```
+
+```{r message=FALSE, warning=FALSE}
+Escuelas290 %>%   
+filter(!grepl("ESCUELA", Establecimiento)) %>% 
+  ggplot(aes(x= agrupacion, y= Porcentaje, group= Establecimiento, fill=agrupacion))+
+  geom_bar(stat = "identity")+
+  facet_wrap(~Establecimiento)+
+  scale_fill_brewer(palette = "Dark2")+
+  geom_text(aes(label = Porcentaje),
+            size= 3,
+            vjust= "inward")+
+  theme(axis.text = element_text(angle = 45, hjust = 1, size = 5),
+        legend.position = "none")+
+  labs(title = "Distribución en jardines e instituciones alternativas",
+       subtitle = "Circuito La Unión",
+       x= "Agrupación")
+```
+
+#### *Circuito (290A) Tristán Suárez*
+
+```{r message=FALSE, warning=FALSE}
+Escuelas290A<- Escrutinio_ac %>% 
+  filter(IdCircuito=="T. Suárez") %>% 
+  group_by(Establecimiento, agrupacion) %>% 
+  summarise(sum(votos)) %>% 
+  rename(total = 'sum(votos)') %>% 
+  ungroup() 
+
+Escuelas290A <- Escuelas290A %>% 
+  group_by(Establecimiento) %>% 
+  mutate(Porcentaje = round(total/sum(total)*100, digits = 2)) 
+
+Escuelas290As<-  colSums(Escuelas290A[ ,3:4])
+view(Escuelas290As)
+```
+
+```{r message=FALSE, warning=FALSE}
+Escuelas290A%>%   
+filter(grepl("ESCUELA", Establecimiento)) %>% 
+  ggplot(aes(x= agrupacion, y= Porcentaje, group= Establecimiento, fill=agrupacion))+
+  geom_bar(stat = "identity")+
+  facet_wrap(~Establecimiento)+
+  scale_fill_brewer(palette = "Dark2")+
+  geom_text(aes(label = Porcentaje),
+            size= 3,
+            vjust= "inward")+
+  theme(axis.text = element_text(angle = 45, hjust = 1, size = 5),
+        legend.position = "none")+
+  labs(title = "Distribución de los votos en Escuelas de gestión pública",
+       subtitle = "Circuito Tristán Suárez",
+       x= "Agrupación")
+```
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+Escuelas290A %>%   
+filter(!grepl('ESCUELA', Establecimiento)) %>% 
+filter(!grepl('JARDIN', Establecimiento)) %>% 
+  ggplot(aes(x= agrupacion, y= Porcentaje, group= Establecimiento, fill=agrupacion))+
+  geom_bar(stat = "identity")+
+  facet_wrap(~Establecimiento)+
+  scale_fill_brewer(palette = "Dark2")+
+  geom_text(aes(label = Porcentaje),
+            size= 3,
+            vjust= "inward")+
+  theme(axis.text = element_text(angle = 45, hjust = 1, size = 5),
+        legend.position = "none")+
+  labs(title = "Distribución de los votos en Escuelas de Gestión Pública",
+       subtitle = "Tristán Suárez",
+       x= "Agrupación")
+```
+
+#### *Circuito (290B) Spegazzini*
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+Escuelas290B<- Escrutinio_ac %>% 
+  filter(IdCircuito=="Spegazzini") %>% 
+  group_by(Establecimiento, agrupacion) %>% 
+  summarise(sum(votos)) %>% 
+  rename(total = 'sum(votos)') %>% 
+  ungroup() 
+
+Escuelas290B <- Escuelas290B %>% 
+  group_by(Establecimiento) %>% 
+  mutate(Porcentaje = round(total/sum(total)*100, digits = 2)) 
+
+Escuelas290Bs<-  colSums(Escuelas290B[ ,3:4])
+view(Escuelas290Bs)
+```
+
+```{r message=FALSE, warning=FALSE}
+Escuelas290B%>%   
+filter(grepl("ESCUELA |JARDIN", Establecimiento)) %>% 
+  ggplot(aes(x= agrupacion, y= Porcentaje, group= Establecimiento, fill=agrupacion))+
+  geom_bar(stat = "identity")+
+  facet_wrap(~Establecimiento)+
+  scale_fill_brewer(palette = "Dark2")+
+  geom_text(aes(label = Porcentaje),
+            size= 3,
+            vjust= "inward")+
+  theme(axis.text = element_text(angle = 45, hjust = 1, size = 5),
+        legend.position = "none")+
+  labs(title = "Distribución de los votos en Escuelas de Educación pública",
+       subtitle = "Circuito Spegazzini",
+       x= "Agrupación")
+```
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+Escuelas290B%>%   
+filter(!grepl('ESCUELA', Establecimiento)) %>% 
+filter(!grepl('JARDIN', Establecimiento)) %>% 
+  ggplot(aes(x= agrupacion, y= Porcentaje, group= Establecimiento, fill=agrupacion))+
+  geom_bar(stat = "identity")+
+  facet_wrap(~Establecimiento)+
+  scale_fill_brewer(palette = "Dark2")+
+  geom_text(aes(label = Porcentaje),
+            size= 3,
+            vjust= "inward")+
+  theme(axis.text = element_text(angle = 45, hjust = 1, size = 6),
+        legend.position = "none")+
+  labs(title = "Distribución de los votos en Escuelas de gestión privada.",
+       subtitle = "Spegazzini",
+       x= "Agrupación")
+```
+
+## **Caracterización en función de los radios censales y la vulnerabilidad territorial**
+
+Vamos a estudiar si hay alguna conexión entre la "vulnerabilidad" de las zonas donde se encuentran las escuelas sedes de votación con los resultados de la misma.
+
+Para eso, investigamos qué tipo de indicadores nos servirían para estratificar de alguna manera las distintas áreas de la localidad de Ezeiza. Nos encontramos con el "Índice de contexto social en educación" (ICSE), que se presenta como la utilización de la información censal para la clasificación de pequeños territorios en base a una aproximación multidimensional a las condiciones de vida como marco para la política educativa. Este indicador se presentó por primera vez en 2016 y está construido a partir de los datos del Censo 2010.
+
+Utilizamos las definiciones que aparecen en el Documento de trabajo cuyo autor es Born, Diego, publicado por el Ministerio de Educación de la Nación, en 2019. Puede verse en el enlace \<<https://panorama.oei.org.ar/_dev2/> wp-content/uploads/2020/01/ICSE-1er-informe-ISBN.pdf>
+
+A continuación hacemos una breve descripción del indicador.
+
+El ICSE es una herramienta que permite segmentar territorios (radios, fracciones, departamentos, provincias) en función de los diferentes niveles de vulnerabilidad o privación que enfrentan los hogares (o las personas) desde un enfoque multidimensional que se nutre de distintos indicadores: las características de la vivienda (materiales y hacinamiento), el acceso a servicios básicos (agua y saneamiento), la educación formal de los integrantes adultos del hogar y la capacidad económica del mismo (a partir de la situación laboral de sus integrantes y de ratios de dependencia ). En cada una de estas dimensiones se consideran uno o dos indicadores para los cuales se definen umbrales de privación moderados y severos. De la agregación equiponderada de los resultados obtenidos en estos indicadores se obtiene el valor del ICSE para cada hogar/persona,
+
+A partir del cálculo del ICSE para las radios censales de Ezeiza, obtuvimos el siguiente mapa, donde la escala de colores asigna el más oscuro a las zonas con más vulnerabilidad.
+
+## **Análisis geográfico.**
+
+```{r message=FALSE, warning=FALSE, cache=FALSE, include=FALSE}
+radios.buenos.aires <- st_read("datos/codeo_BsAs/Buenos_Aires_con_datos.shp")
+
+radios.buenos.aires <- st_transform(radios.buenos.aires, crs = 4326)
+
+# Subseleccion de Radios Censales en Ezeiza
+rc.ezeiza <- radios.buenos.aires %>% filter(str_detect(link, "06270"))
+
+ezeiza <- rc.ezeiza %>% mutate(unos = 1) %>%  summarise(suma = sum(unos))
+
+indice_ICSE_ezeiza<-read_excel("datos/ICSE_Ezeiza.xlsx")
+
+rc.ezeiza$link <- as.double(rc.ezeiza$link)
+
+rc.ezeiza <- rc.ezeiza %>% 
+  left_join(indice_ICSE_ezeiza,             
+            by = c( "link" = "RADIO"))
+
+cuartiles <- quantile(rc.ezeiza$ICSE3a17)
+cuartiles
+
+# Nueva Variable
+rc.ezeiza <- rc.ezeiza %>% 
+  mutate(ICSE3a17 = case_when(.$ICSE3a17 <= cuartiles[[2]] ~ 1,
+                          .$ICSE3a17 <= cuartiles[[3]] ~ 2,
+                          .$ICSE3a17 <= cuartiles[[4]] ~ 3,
+                          .$ICSE3a17> cuartiles[[4]] ~ 4))
+
+# Cambiando los nombres de las variables creadas anteriormente
+cuartiles.colores <- factor(c(1,2,3,4), 
+                            labels = c("0-24.99%", "25-49.99%", 
+                                       "50-74.99%", "75-100%"))
+
+colors <- c("#e3f2fd", "#64b5f6", "#1e88e5", "#0d47a1")
+
+binpal <- colorBin(colors, rc.ezeiza$ICSE3a17, 4, pretty = FALSE)
+
+Color_Assets <- colorFactor(colors, levels = cuartiles.colores, ordered=TRUE)
+```
+
+```{r message=FALSE, warning=FALSE, cache=FALSE}
+leaflet() %>%
+  addTiles() %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  # Mapeando los poligonos de Ezeiza
+  addPolygons(data = rc.ezeiza,
+              color = ~binpal(ICSE3a17), weight = 1, smoothFactor = 1,
+              stroke = FALSE, fillOpacity = 0.5) %>% 
+  addPolygons(data = ezeiza, fill = NA, color = "black", fillOpacity = NA) %>% 
+  addLegend("bottomright", pal = Color_Assets, values =  cuartiles.colores,
+    title = "Vulnerabilidad según ICSE",
+    opacity = 1)
+```
+
+Como otra capa de análisis, consideramos la ubicación geográfica de los Barrios Populares, registrados por la Secretaría de integración socio urbana del Ministerio de Desarrollo Social de la Nación, desde el año 2017.Los polígonos que utilizamos para la elaboración de esta capa del mapa están en <https://datos.gob.ar/dataset/desarrollo-social-registro-nacional-barrios-populares>
+
+Actualmente hay 14 barrios denominados populares dentro del distrito de Ezeiza, dicha caracterización se basa principalmente el acceso y la calidad que los vecinos tienen de los servicios públicos.
+
+• Todos tienen conexión formal a la red de electricidad, excepto el barrio la Flecha en Spegazzini y Vista Linda en Tristán Suárez. • Ninguno tiene acceso a cloacas, pero 10 si cuentan con cámara séptica y pozo ciego, mientras que en cuatro de ellos los vecinos sólo tienen pozo negro u hoyo. • En cuanto al agua 12 de los barrios obtienen el agua por medio de bomba de uso domiciliario y sólo dos cuentan con una conexión irregular a la red de agua, ambos ubicados en la localidad de La Unión. • Solo dos barrios ubicados en la localidad de Spegazzini, cuentan con conexión formal a la red de gas; el resto se abastece por medio de garrafas.
+
+Los Barrios Populares aparecen en color rosa en el siguiente mapa.
+
+```{r message=FALSE, warning=FALSE, cache=FALSE}
+barrios_populares <- st_read("datos/barrios_populares/barrios-populares.shp")
+
+barrios_populares <- st_transform(barrios_populares, crs = 4326)
+
+#falta seleccionar ezeiza  
+barrios_populares_ezeiza <- barrios_populares %>% filter(departamen == "EZEIZA")
+
+
+leaflet() %>%
+  addTiles() %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  # Mapeando los poligonos de Ezeiza
+  addPolygons(data = rc.ezeiza,
+              color = ~binpal(ICSE3a17), weight = 1, smoothFactor = 1,
+              stroke = FALSE, fillOpacity = 0.5) %>% 
+   addPolygons(data = barrios_populares_ezeiza, 
+              color = "pink", 
+              weight = 1, 
+              smoothFactor = 0.5, 
+              opacity = 1)%>% 
+ 
+  addPolygons(data = ezeiza, fill = NA, color = "black", fillOpacity = NA) %>% 
+  addLegend("bottomright", pal = Color_Assets, values =  cuartiles.colores,
+    title = "Vulnerabilidad según ICSE",
+    opacity = 1)
+```
+
+Por último, construimos una capa donde los puntos son las distintas escuelas de Ezeiza.
+
+```{r}
+Escrutinio<-read_excel("datos/Escrutinio_geo.xls")
+
+listado_para_ubicacion<-read_excel("datos/Escuelas_arregladas.xlsx")
+
+listado <- select(Escrutinio, Establecimiento, IdCircuito)%>%
+  unique ()%>%
+  inner_join(listado_para_ubicacion, by=c("Establecimiento" = "nombre"))
+#write.xlsx(listado, "C:/Users/malmeida/listado.xlsx" )
+
+#Lo transformamos en formato geográfico
+
+escuelas_ezeiza <- listado %>% 
+  st_as_sf(coords = c("longitud", "latitud"),crs = 4326)
+
+leaflet() %>%
+  addTiles() %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  # Mapeando los poligonos de Ezeiza
+  addPolygons(data = rc.ezeiza,
+              color = ~binpal(ICSE3a17), weight = 1, smoothFactor = 1,
+              stroke = FALSE, fillOpacity = 0.5) %>% 
+   addPolygons(data = barrios_populares_ezeiza, 
+              color = "pink", 
+              weight = 1, 
+              smoothFactor = 0.5, 
+              opacity = 0.5, label = ~ nombreBarr)%>% 
+ addPolygons(data = ezeiza, fill = NA, color = "black", fillOpacity = NA) %>% 
+  addLegend("bottomright", pal = Color_Assets, values =  cuartiles.colores,
+    title = "Vulnerabilidad según ICSE",
+    opacity = 0.5)%>%
+  addCircleMarkers(data = escuelas_ezeiza, 
+                   radius = 1, 
+                   color = "#0d48a1", 
+                   opacity = 1, popup  =  ~ Establecimiento) 
+  
+
+```
+
+Finalmente realizamos un análisis de los resultados en las escuelas de zonas más vulnerables y las de zonas menos vulnerables.
+
+```{r}
+escuelas_ezeiza<-escuelas_ezeiza%>%
+  mutate(idRadio=st_within(escuelas_ezeiza, rc.ezeiza))
+  
+
+escuelas_ezeiza$idRadio<-as.numeric(escuelas_ezeiza$idRadio)
+
+Escrutinio_votos<-Escrutinio%>%
+  filter(Cargo =="DIPUTADOS NACIONALES")%>%
+  group_by(Establecimiento, Agrupacion)%>%
+  summarise(votos=sum(votos))%>%
+  pivot_wider(names_from=Agrupacion, values_from=votos, values_fill=0)%>%
+  right_join(escuelas_ezeiza,by = "Establecimiento") %>% arrange(idRadio)
+
+
+
+#armo un vector con las filas que quiero filtrar
+filtro_filas<-Escrutinio_votos$idRadio
+
+tabla_filtrada_ICSE<-indice_ICSE_ezeiza[filtro_filas,]
+
+tabla_filtrada_ICSE_idR <- tabla_filtrada_ICSE %>% mutate(idRadio=filtro_filas) %>% select(ICSE3a17,idRadio)
+
+
+Escrutinio_votos_ICSE<-Escrutinio_votos %>% left_join(tabla_filtrada_ICSE_idR) %>% 
+rename(Frente_de_todos= `FRENTE DE TODOS`)
+#Cambiar nombres de columnas (sin espacios)
+
+view(Escrutinio_votos_ICSE)
+  
+
+#Miramos la correlacion de las variables
+ 
+regresion <- lm(Frente_de_todos  ~ ICSE3a17, Escrutinio_votos_ICSE)
+summary(regresion)
+
+```
